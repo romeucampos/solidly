@@ -42,7 +42,8 @@ interface VotingEscrow {
     function user_point_history(uint tokenId, uint loc) external view returns (Point memory);
     function point_history(uint loc) external view returns (Point memory);
     function checkpoint() external;
-    function deposit_for(uint tokenId, uint value)  external;
+    function deposit_for(uint tokenId, uint value) external;
+    function token() external view returns (address);
 }
 
 contract ve_dist {
@@ -71,21 +72,21 @@ contract ve_dist {
 
     address public voting_escrow;
     address public token;
-    uint public total_received;
     uint public token_last_balance;
 
     uint[1000000000000000] public ve_supply;
 
     address public depositor;
 
-    constructor(address _voting_escrow, address _token, address _depositor) {
+    constructor(address _voting_escrow) {
         uint _t = block.timestamp / WEEK * WEEK;
         start_time = _t;
         last_token_time = _t;
         time_cursor = _t;
+        address _token = VotingEscrow(_voting_escrow).token();
         token = _token;
         voting_escrow = _voting_escrow;
-        depositor = _depositor;
+        depositor = msg.sender;
         erc20(_token).approve(_voting_escrow, type(uint).max);
     }
 
@@ -177,7 +178,7 @@ contract ve_dist {
         uint rounded_timestamp = block.timestamp / WEEK * WEEK;
         VotingEscrow(ve).checkpoint();
 
-        for (uint i = 0; i < 20; i ++) {
+        for (uint i = 0; i < 20; i++) {
             if (t > rounded_timestamp) {
                 break;
             } else {
@@ -256,54 +257,54 @@ contract ve_dist {
     }
 
     function _claimable(uint _tokenId, address ve, uint _last_token_time) internal view returns (uint) {
-      uint user_epoch = 0;
-      uint to_distribute = 0;
+        uint user_epoch = 0;
+        uint to_distribute = 0;
 
-      uint max_user_epoch = VotingEscrow(ve).user_point_epoch(_tokenId);
-      uint _start_time = start_time;
+        uint max_user_epoch = VotingEscrow(ve).user_point_epoch(_tokenId);
+        uint _start_time = start_time;
 
-      if (max_user_epoch == 0) return 0;
+        if (max_user_epoch == 0) return 0;
 
-      uint week_cursor = time_cursor_of[_tokenId];
-      if (week_cursor == 0) {
-          user_epoch = _find_timestamp_user_epoch(ve, _tokenId, _start_time, max_user_epoch);
-      } else {
-          user_epoch = user_epoch_of[_tokenId];
-      }
+        uint week_cursor = time_cursor_of[_tokenId];
+        if (week_cursor == 0) {
+            user_epoch = _find_timestamp_user_epoch(ve, _tokenId, _start_time, max_user_epoch);
+        } else {
+            user_epoch = user_epoch_of[_tokenId];
+        }
 
-      if (user_epoch == 0) user_epoch = 1;
+        if (user_epoch == 0) user_epoch = 1;
 
-      VotingEscrow.Point memory user_point = VotingEscrow(ve).user_point_history(_tokenId, user_epoch);
+        VotingEscrow.Point memory user_point = VotingEscrow(ve).user_point_history(_tokenId, user_epoch);
 
-      if (week_cursor == 0) week_cursor = (user_point.ts + WEEK - 1) / WEEK * WEEK;
-      if (week_cursor >= last_token_time) return 0;
-      if (week_cursor < _start_time) week_cursor = _start_time;
+        if (week_cursor == 0) week_cursor = (user_point.ts + WEEK - 1) / WEEK * WEEK;
+        if (week_cursor >= last_token_time) return 0;
+        if (week_cursor < _start_time) week_cursor = _start_time;
 
-      VotingEscrow.Point memory old_user_point;
+        VotingEscrow.Point memory old_user_point;
 
-      for (uint i = 0; i < 50; i++) {
-          if (week_cursor >= _last_token_time) break;
+        for (uint i = 0; i < 50; i++) {
+            if (week_cursor >= _last_token_time) break;
 
-          if (week_cursor >= user_point.ts && user_epoch <= max_user_epoch) {
-              user_epoch += 1;
-              old_user_point = user_point;
-              if (user_epoch > max_user_epoch) {
-                  user_point = VotingEscrow.Point(0,0,0,0);
-              } else {
-                  user_point = VotingEscrow(ve).user_point_history(_tokenId, user_epoch);
-              }
-          } else {
-              int128 dt = int128(int256(week_cursor - old_user_point.ts));
-              uint balance_of = Math.max(uint(int256(old_user_point.bias - dt * old_user_point.slope)), 0);
-              if (balance_of == 0 && user_epoch > max_user_epoch) break;
-              if (balance_of > 0) {
-                  to_distribute += balance_of * tokens_per_week[week_cursor] / ve_supply[week_cursor];
-              }
-              week_cursor += WEEK;
-          }
-      }
+            if (week_cursor >= user_point.ts && user_epoch <= max_user_epoch) {
+                user_epoch += 1;
+                old_user_point = user_point;
+                if (user_epoch > max_user_epoch) {
+                    user_point = VotingEscrow.Point(0,0,0,0);
+                } else {
+                    user_point = VotingEscrow(ve).user_point_history(_tokenId, user_epoch);
+                }
+            } else {
+                int128 dt = int128(int256(week_cursor - old_user_point.ts));
+                uint balance_of = Math.max(uint(int256(old_user_point.bias - dt * old_user_point.slope)), 0);
+                if (balance_of == 0 && user_epoch > max_user_epoch) break;
+                if (balance_of > 0) {
+                    to_distribute += balance_of * tokens_per_week[week_cursor] / ve_supply[week_cursor];
+                }
+                week_cursor += WEEK;
+            }
+        }
 
-      return to_distribute;
+        return to_distribute;
     }
 
     function claimable(uint _tokenId) external view returns (uint) {

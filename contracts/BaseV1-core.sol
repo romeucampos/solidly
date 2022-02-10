@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT
-
 pragma solidity 0.8.11;
 
 interface erc20 {
@@ -37,9 +36,9 @@ interface IBaseV1Callee {
 // Base V1 Fees contract is used as a 1:1 pair relationship to split out fees, this ensures that the curve does not need to be modified for LP shares
 contract BaseV1Fees {
 
-    address immutable pair; // The pair it is bonded to
-    address immutable token0; // token0 of pair, saved localy and statically for gas optimization
-    address immutable token1; // Token1 of pair, saved localy and statically for gas optimization
+    address internal immutable pair; // The pair it is bonded to
+    address internal immutable token0; // token0 of pair, saved localy and statically for gas optimization
+    address internal immutable token1; // Token1 of pair, saved localy and statically for gas optimization
 
     constructor(address _token0, address _token1) {
         pair = msg.sender;
@@ -48,8 +47,9 @@ contract BaseV1Fees {
     }
 
     function _safeTransfer(address token,address to,uint256 value) internal {
+        require(token.code.length > 0);
         (bool success, bytes memory data) =
-            token.call(abi.encodeWithSelector(erc20.transfer.selector, to, value));
+        token.call(abi.encodeWithSelector(erc20.transfer.selector, to, value));
         require(success && (data.length == 0 || abi.decode(data, (bool))));
     }
 
@@ -77,19 +77,17 @@ contract BaseV1Pair {
     mapping(address => mapping (address => uint)) public allowance;
     mapping(address => uint) public balanceOf;
 
-    bytes32 DOMAIN_SEPARATOR;
+    bytes32 internal DOMAIN_SEPARATOR;
     // keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)");
-    bytes32 constant PERMIT_TYPEHASH = 0x6e71edae12b1b97f4d1f60370fef10105fa2faae0126114a169c64845d6126c9;
+    bytes32 internal constant PERMIT_TYPEHASH = 0x6e71edae12b1b97f4d1f60370fef10105fa2faae0126114a169c64845d6126c9;
     mapping(address => uint) public nonces;
 
     uint internal constant MINIMUM_LIQUIDITY = 10**3;
 
-    event Transfer(address indexed from, address indexed to, uint amount);
-    event Approval(address indexed owner, address indexed spender, uint amount);
-
     address public immutable token0;
     address public immutable token1;
     address public immutable fees;
+    address immutable factory;
 
     // Structure to capture time period obervations every 30 minutes, used for local oracles
     struct Observation {
@@ -103,8 +101,8 @@ contract BaseV1Pair {
 
     Observation[] public observations;
 
-    uint immutable decimals0;
-    uint immutable decimals1;
+    uint internal immutable decimals0;
+    uint internal immutable decimals1;
 
     uint public reserve0;
     uint public reserve1;
@@ -138,8 +136,13 @@ contract BaseV1Pair {
         address indexed to
     );
     event Sync(uint reserve0, uint reserve1);
+    event Claim(address indexed sender, address indexed recipient, uint amount0, uint amount1);
+
+    event Transfer(address indexed from, address indexed to, uint amount);
+    event Approval(address indexed owner, address indexed spender, uint amount);
 
     constructor() {
+        factory = msg.sender;
         (address _token0, address _token1, bool _stable) = BaseV1Factory(msg.sender).getInitializable();
         (token0, token1, stable) = (_token0, _token1, _stable);
         fees = address(new BaseV1Fees(_token0, _token1));
@@ -158,7 +161,7 @@ contract BaseV1Pair {
     }
 
     // simple re-entrancy check
-    uint _unlocked = 1;
+    uint internal _unlocked = 1;
     modifier lock() {
         require(_unlocked == 1);
         _unlocked = 2;
@@ -184,19 +187,19 @@ contract BaseV1Pair {
 
     // claim accumulated but unclaimed fees (viewable via claimable0 and claimable1)
     function claimFees() external returns (uint claimed0, uint claimed1) {
-        return claimFeesFor(msg.sender);
-    }
+        _updateFor(msg.sender);
 
-    function claimFeesFor(address recipient) public lock returns (uint claimed0, uint claimed1) {
-        _updateFor(recipient);
+        claimed0 = claimable0[msg.sender];
+        claimed1 = claimable1[msg.sender];
 
-        claimed0 = claimable0[recipient];
-        claimed1 = claimable1[recipient];
+        if (claimed0 > 0 || claimed1 > 0) {
+            claimable0[msg.sender] = 0;
+            claimable1[msg.sender] = 0;
 
-        claimable0[recipient] = 0;
-        claimable1[recipient] = 0;
+            BaseV1Fees(fees).claimFeesFor(msg.sender, claimed0, claimed1);
 
-        BaseV1Fees(fees).claimFeesFor(recipient, claimed0, claimed1);
+            emit Claim(msg.sender, msg.sender, claimed0, claimed1);
+        }
     }
 
     // Accrue fees on token0
@@ -204,7 +207,7 @@ contract BaseV1Pair {
         _safeTransfer(token0, fees, amount); // transfer the fees out to BaseV1Fees
         uint256 _ratio = amount * 1e18 / totalSupply; // 1e18 adjustment is removed during claim
         if (_ratio > 0) {
-          index0 += _ratio;
+            index0 += _ratio;
         }
         emit Fees(msg.sender, amount, 0);
     }
@@ -214,7 +217,7 @@ contract BaseV1Pair {
         _safeTransfer(token1, fees, amount);
         uint256 _ratio = amount * 1e18 / totalSupply;
         if (_ratio > 0) {
-          index1 += _ratio;
+            index1 += _ratio;
         }
         emit Fees(msg.sender, 0, amount);
     }
@@ -233,12 +236,12 @@ contract BaseV1Pair {
             uint _delta0 = _index0 - _supplyIndex0; // see if there is any difference that need to be accrued
             uint _delta1 = _index1 - _supplyIndex1;
             if (_delta0 > 0) {
-              uint _share = _supplied * _delta0 / 1e18; // add accrued difference for each supplied token
-              claimable0[recipient] += _share;
+                uint _share = _supplied * _delta0 / 1e18; // add accrued difference for each supplied token
+                claimable0[recipient] += _share;
             }
             if (_delta1 > 0) {
-              uint _share = _supplied * _delta1 / 1e18;
-              claimable1[recipient] += _share;
+                uint _share = _supplied * _delta1 / 1e18;
+                claimable1[recipient] += _share;
             }
         } else {
             supplyIndex0[recipient] = index0; // new users are set to the default global state
@@ -384,6 +387,7 @@ contract BaseV1Pair {
 
     // this low-level function should be called from a contract which performs important safety checks
     function swap(uint amount0Out, uint amount1Out, address to, bytes calldata data) external lock {
+        require(!BaseV1Factory(factory).isPaused());
         require(amount0Out > 0 || amount1Out > 0, 'IOA'); // BaseV1: INSUFFICIENT_OUTPUT_AMOUNT
         (uint _reserve0, uint _reserve1) =  (reserve0, reserve1);
         require(amount0Out < _reserve0 && amount1Out < _reserve1, 'IL'); // BaseV1: INSUFFICIENT_LIQUIDITY
@@ -431,7 +435,6 @@ contract BaseV1Pair {
     function _f(uint x0, uint y) internal pure returns (uint) {
         return x0*(y*y/1e18*y/1e18)/1e18+(x0*x0/1e18*x0/1e18)*y/1e18;
     }
-
 
     function _d(uint x0, uint y) internal pure returns (uint) {
         return 3*x0*(y*y/1e18)/1e18+(x0*x0/1e18*x0/1e18);
@@ -521,7 +524,7 @@ contract BaseV1Pair {
             abi.encode(
                 keccak256('EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)'),
                 keccak256(bytes(name)),
-                keccak256(bytes('1')),
+                keccak256('1'),
                 block.chainid,
                 address(this)
             )
@@ -571,32 +574,51 @@ contract BaseV1Pair {
     }
 
     function _safeTransfer(address token,address to,uint256 value) internal {
+        require(token.code.length > 0);
         (bool success, bytes memory data) =
-            token.call(abi.encodeWithSelector(erc20.transfer.selector, to, value));
-        require(success && (data.length == 0 || abi.decode(data, (bool))));
-    }
-
-    function _safeTransferFrom(address token, address from, address to, uint256 value) internal {
-        (bool success, bytes memory data) =
-            token.call(abi.encodeWithSelector(erc20.transferFrom.selector, from, to, value));
+        token.call(abi.encodeWithSelector(erc20.transfer.selector, to, value));
         require(success && (data.length == 0 || abi.decode(data, (bool))));
     }
 }
 
 contract BaseV1Factory {
 
+    bool public isPaused;
+    address public pauser;
+    address public pendingPauser;
+
     mapping(address => mapping(address => mapping(bool => address))) public getPair;
     address[] public allPairs;
     mapping(address => bool) public isPair; // simplified check if its a pair, given that `stable` flag might not be available in peripherals
 
-    address _temp0;
-    address _temp1;
-    bool _temp;
+    address internal _temp0;
+    address internal _temp1;
+    bool internal _temp;
 
     event PairCreated(address indexed token0, address indexed token1, bool stable, address pair, uint);
 
+    constructor() {
+        pauser = msg.sender;
+        isPaused = false;
+    }
+
     function allPairsLength() external view returns (uint) {
         return allPairs.length;
+    }
+
+    function setPauser(address _pauser) external {
+        require(msg.sender == pauser);
+        pendingPauser = _pauser;
+    }
+
+    function acceptPauser() external {
+        require(msg.sender == pendingPauser);
+        pauser = pendingPauser;
+    }
+
+    function setPause(bool _state) external {
+        require(msg.sender == pauser);
+        isPaused = _state;
     }
 
     function pairCodeHash() external pure returns (bytes32) {

@@ -23,7 +23,7 @@ module.exports = {
     settings: {
       optimizer: {
         enabled: true,
-        runs: 9999,
+        runs: 200,
       },
     },
   },
@@ -31,5 +31,8 @@ module.exports = {
     hardhat: {
       initialBaseFeePerGas: 0,
     },
+    ftmtest: {
+      url: "https://rpc.testnet.fantom.network/",
+    }
   },
 };

@@ -170,9 +170,14 @@ describe("washtrade", function () {
   it("deploy BaseV1Voter", async function () {
     const BaseV1GaugeFactory = await ethers.getContractFactory("BaseV1GaugeFactory");
     gauges_factory = await BaseV1GaugeFactory.deploy();
+    await gauges_factory.deployed();
+    const BaseV1BribeFactory = await ethers.getContractFactory("BaseV1BribeFactory");
+    const bribe_factory = await BaseV1BribeFactory.deploy();
+    await bribe_factory.deployed();
     const BaseV1Voter = await ethers.getContractFactory("BaseV1Voter");
-    gauge_factory = await BaseV1Voter.deploy(ve.address, factory.address, gauges_factory.address);
+    gauge_factory = await BaseV1Voter.deploy(ve.address, factory.address, gauges_factory.address, bribe_factory.address);
     await gauge_factory.deployed();
+    await gauge_factory.initialize([ust.address, mim.address, dai.address, ve_underlying.address],owner.address);
 
     expect(await gauge_factory.length()).to.equal(0);
   });
@@ -180,6 +185,7 @@ describe("washtrade", function () {
   it("deploy BaseV1Factory gauge", async function () {
     const pair_1000 = ethers.BigNumber.from("1000000000");
 
+    await ve_underlying.approve(gauge_factory.address, ethers.BigNumber.from("500000000000000000000000"));
     await gauge_factory.createGauge(pair3.address);
     expect(await gauge_factory.gauges(pair.address)).to.not.equal(0x0000000000000000000000000000000000000000);
 
@@ -258,6 +264,8 @@ describe("washtrade", function () {
     console.log(await bribe3.earned(mim.address, 1));
     console.log(await mim.balanceOf(owner.address));
     console.log(await mim.balanceOf(bribe3.address));
+    await bribe3.batchRewardPerToken(mim.address, 200);
+    await bribe3.batchRewardPerToken(dai.address, 200);
     await bribe3.getReward(1, [mim.address, dai.address]);
     await network.provider.send("evm_increaseTime", [691200])
     await network.provider.send("evm_mine")

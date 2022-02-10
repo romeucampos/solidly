@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity ^0.8.11;
+pragma solidity 0.8.11;
 
 interface IBaseV1Factory {
     function allPairsLength() external view returns (uint);
@@ -31,9 +31,6 @@ interface erc20 {
 }
 
 library Math {
-    function max(uint a, uint b) internal pure returns (uint) {
-        return a >= b ? a : b;
-    }
     function min(uint a, uint b) internal pure returns (uint) {
         return a < b ? a : b;
     }
@@ -95,15 +92,15 @@ contract BaseV1Router01 {
     function pairFor(address tokenA, address tokenB, bool stable) public view returns (address pair) {
         (address token0, address token1) = sortTokens(tokenA, tokenB);
         pair = address(uint160(uint256(keccak256(abi.encodePacked(
-                hex'ff',
-                factory,
-                keccak256(abi.encodePacked(token0, token1, stable)),
-                pairCodeHash // init code hash
-            )))));
+            hex'ff',
+            factory,
+            keccak256(abi.encodePacked(token0, token1, stable)),
+            pairCodeHash // init code hash
+        )))));
     }
 
     // given some amount of an asset and pair reserves, returns an equivalent amount of the other asset
-    function quote(uint amountA, uint reserveA, uint reserveB) internal pure returns (uint amountB) {
+    function quoteLiquidity(uint amountA, uint reserveA, uint reserveB) internal pure returns (uint amountB) {
         require(amountA > 0, 'BaseV1Router: INSUFFICIENT_AMOUNT');
         require(reserveA > 0 && reserveB > 0, 'BaseV1Router: INSUFFICIENT_LIQUIDITY');
         amountB = amountA * reserveB / reserveA;
@@ -117,7 +114,7 @@ contract BaseV1Router01 {
     }
 
     // performs chained getAmountOut calculations on any number of pairs
-    function getAmountOut(uint amountIn, address tokenIn, address tokenOut) public view returns (uint amount, bool stable) {
+    function getAmountOut(uint amountIn, address tokenIn, address tokenOut) external view returns (uint amount, bool stable) {
         address pair = pairFor(tokenIn, tokenOut, true);
         uint amountStable;
         uint amountVolatile;
@@ -168,12 +165,12 @@ contract BaseV1Router01 {
             liquidity = Math.sqrt(amountA * amountB) - MINIMUM_LIQUIDITY;
         } else {
 
-            uint amountBOptimal = quote(amountADesired, reserveA, reserveB);
+            uint amountBOptimal = quoteLiquidity(amountADesired, reserveA, reserveB);
             if (amountBOptimal <= amountBDesired) {
                 (amountA, amountB) = (amountADesired, amountBOptimal);
                 liquidity = Math.min(amountA * _totalSupply / reserveA, amountB * _totalSupply / reserveB);
             } else {
-                uint amountAOptimal = quote(amountBDesired, reserveB, reserveA);
+                uint amountAOptimal = quoteLiquidity(amountBDesired, reserveB, reserveA);
                 (amountA, amountB) = (amountAOptimal, amountBDesired);
                 liquidity = Math.min(amountA * _totalSupply / reserveA, amountB * _totalSupply / reserveB);
             }
@@ -221,12 +218,12 @@ contract BaseV1Router01 {
         if (reserveA == 0 && reserveB == 0) {
             (amountA, amountB) = (amountADesired, amountBDesired);
         } else {
-            uint amountBOptimal = quote(amountADesired, reserveA, reserveB);
+            uint amountBOptimal = quoteLiquidity(amountADesired, reserveA, reserveB);
             if (amountBOptimal <= amountBDesired) {
                 require(amountBOptimal >= amountBMin, 'BaseV1Router: INSUFFICIENT_B_AMOUNT');
                 (amountA, amountB) = (amountADesired, amountBOptimal);
             } else {
-                uint amountAOptimal = quote(amountBDesired, reserveB, reserveA);
+                uint amountAOptimal = quoteLiquidity(amountBDesired, reserveB, reserveA);
                 assert(amountAOptimal <= amountADesired);
                 require(amountAOptimal >= amountAMin, 'BaseV1Router: INSUFFICIENT_A_AMOUNT');
                 (amountA, amountB) = (amountAOptimal, amountBDesired);
@@ -291,7 +288,7 @@ contract BaseV1Router01 {
         uint deadline
     ) public ensure(deadline) returns (uint amountA, uint amountB) {
         address pair = pairFor(tokenA, tokenB, stable);
-        IBaseV1Pair(pair).transferFrom(msg.sender, pair, liquidity); // send liquidity to pair
+        require(IBaseV1Pair(pair).transferFrom(msg.sender, pair, liquidity)); // send liquidity to pair
         (uint amount0, uint amount1) = IBaseV1Pair(pair).burn(to);
         (address token0,) = sortTokens(tokenA, tokenB);
         (amountA, amountB) = tokenA == token0 ? (amount0, amount1) : (amount1, amount0);
@@ -410,10 +407,10 @@ contract BaseV1Router01 {
     }
 
     function swapExactFTMForTokens(uint amountOutMin, route[] calldata routes, address to, uint deadline)
-        external
-        payable
-        ensure(deadline)
-        returns (uint[] memory amounts)
+    external
+    payable
+    ensure(deadline)
+    returns (uint[] memory amounts)
     {
         require(routes[0].from == address(wftm), 'BaseV1Router: INVALID_PATH');
         amounts = getAmountsOut(msg.value, routes);
@@ -424,9 +421,9 @@ contract BaseV1Router01 {
     }
 
     function swapExactTokensForFTM(uint amountIn, uint amountOutMin, route[] calldata routes, address to, uint deadline)
-        external
-        ensure(deadline)
-        returns (uint[] memory amounts)
+    external
+    ensure(deadline)
+    returns (uint[] memory amounts)
     {
         require(routes[routes.length - 1].to == address(wftm), 'BaseV1Router: INVALID_PATH');
         amounts = getAmountsOut(amountIn, routes);
@@ -456,14 +453,16 @@ contract BaseV1Router01 {
     }
 
     function _safeTransfer(address token, address to, uint256 value) internal {
+        require(token.code.length > 0);
         (bool success, bytes memory data) =
-            token.call(abi.encodeWithSelector(erc20.transfer.selector, to, value));
+        token.call(abi.encodeWithSelector(erc20.transfer.selector, to, value));
         require(success && (data.length == 0 || abi.decode(data, (bool))));
     }
 
     function _safeTransferFrom(address token, address from, address to, uint256 value) internal {
+        require(token.code.length > 0);
         (bool success, bytes memory data) =
-            token.call(abi.encodeWithSelector(erc20.transferFrom.selector, from, to, value));
+        token.call(abi.encodeWithSelector(erc20.transferFrom.selector, from, to, value));
         require(success && (data.length == 0 || abi.decode(data, (bool))));
     }
 }
